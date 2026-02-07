@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="windowTitle">
+   <string>Mouse Scroll Config</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout">
+
+    <item>
+     <layout class="QHBoxLayout">
+      <item><widget class="QPushButton" name="profile1"><property name="text"><string>Profile 1</string></property></widget></item>
+      <item><widget class="QPushButton" name="profile2"><property name="text"><string>Profile 2</string></property></widget></item>
+      <item><widget class="QPushButton" name="profile3"><property name="text"><string>Profile 3</string></property></widget></item>
+      <item><widget class="QPushButton" name="profile4"><property name="text"><string>Profile 4</string></property></widget></item>
+     </layout>
+    </item>
+
+    <item>
+     <widget class="QLabel" name="profileLabel">
+      <property name="text"><string>Profile 1</string></property>
+      <property name="alignment"><set>Qt::AlignCenter</set></property>
+     </widget>
+    </item>
+
+    <item>
+     <widget class="QGroupBox">
+      <property name="title"><string>Scroll Speed Stages</string></property>
+      <layout class="QGridLayout">
+
+       <item row="0" column="0"><widget class="QSpinBox" name="speed1"/></item>
+       <item row="0" column="1"><widget class="QSpinBox" name="speed2"/></item>
+       <item row="0" column="2"><widget class="QSpinBox" name="speed3"/></item>
+       <item row="0" column="3"><widget class="QSpinBox" name="speed4"/></item>
+       <item row="0" column="4"><widget class="QSpinBox" name="speed5"/></item>
+
+       <item row="1" column="0"><widget class="QPushButton" name="stage1"><property name="text"><string>1</string></property></widget></item>
+       <item row="1" column="1"><widget class="QPushButton" name="stage2"><property name="text"><string>2</string></property></widget></item>
+       <item row="1" column="2"><widget class="QPushButton" name="stage3"><property name="text"><string>3</string></property></widget></item>
+       <item row="1" column="3"><widget class="QPushButton" name="stage4"><property name="text"><string>4</string></property></widget></item>
+       <item row="1" column="4"><widget class="QPushButton" name="stage5"><property name="text"><string>5</string></property></widget></item>
+
+      </layout>
+     </widget>
+    </item>
+
+    <item>
+     <widget class="QPushButton" name="applyScroll">
+      <property name="text"><string>Apply Scroll Settings</string></property>
+     </widget>
+    </item>
+
+   </layout>
+  </widget>
+ </widget>
+</ui>

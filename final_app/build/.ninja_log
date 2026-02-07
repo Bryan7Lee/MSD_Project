@@ -1,0 +1,9 @@
+# ninja log v6
+15	254	7921995615480259	final_app_autogen/timestamp	d913a434dff37c6a
+15	254	7921995615480259	final_app_autogen/mocs_compilation.cpp	d913a434dff37c6a
+15	254	7921995615480259	D:/Projects/MSD_Project/final_app/build/final_app_autogen/timestamp	d913a434dff37c6a
+15	254	7921995615480259	D:/Projects/MSD_Project/final_app/build/final_app_autogen/mocs_compilation.cpp	d913a434dff37c6a
+258	2128	7921995615937406	CMakeFiles/final_app.dir/final_app_autogen/mocs_compilation.cpp.obj	3dd3b7ad4625cabf
+263	2133	7921995615985388	CMakeFiles/final_app.dir/main.cpp.obj	cf61c3a1783822fe
+267	2157	7921995616035623	CMakeFiles/final_app.dir/mainwindow.cpp.obj	26adf6970c121a9e
+2157	2670	7921995634941065	final_app.exe	76d3385aaf3158bc
