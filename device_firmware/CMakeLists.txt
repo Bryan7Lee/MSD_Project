@@ -27,6 +27,7 @@ target_link_libraries(mouse_firmware
     tinyusb_device
     tinyusb_board
     pico_stdio_usb
+    hardware_adc
 )
 
 pico_enable_stdio_usb(mouse_firmware 1)

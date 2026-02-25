@@ -1,6 +1,7 @@
 // libraries
 #include <stdio.h>
 #include "pico/stdlib.h" 
+#include "hardware/adc.h"
 #include "tusb.h"
 #include <map>
 
@@ -8,7 +9,8 @@
 #define LED_PIN 25     // built-in LED on board
 #define BUTTON1_PIN 13 // left click button
 #define BUTTON2_PIN 15 // right click button
-#define LEFTCLICK_MASK 1
+#define LEFTCLICK_MASK 1 
+#define RIGHTCLICK_MASK 2
 
 // Current button mappings (example: map to keyboard keys)
 std::map<int, uint8_t> button_mapping = {
@@ -35,25 +37,6 @@ extern "C" void tud_hid_set_report_cb(uint8_t instance,
 }
 
 /**
- * function allows user to press button to perform mouse left click
- */
-void send_left_click() {
-    if (tud_hid_ready()) {
-        // Use 0 if you don't have a descriptor defining a specific Report ID yet
-        tud_hid_mouse_report(
-            0, // report id
-            LEFTCLICK_MASK, // button mask 
-            0,  // x movement
-            0,  // y movement
-            0,  // vertical scroll
-            0   // horizontal scroll
-        );
-        sleep_ms(10); 
-        tud_hid_mouse_report(0, 0, 0, 0, 0, 0); // send left click released flag
-    }
-}
-
-/**
  * main
  */
 int main()
@@ -61,15 +44,22 @@ int main()
     // vars 
     static bool clicked = false;
     static absolute_time_t click_time;
+    absolute_time_t last_scroll_time = get_absolute_time();
+    const uint32_t SCROLL_INTERVAL_US = 90000; // 90ms 
     bool leftclick_pressed;
     bool rightclick_pressed;
     uint8_t buttons;
+    uint16_t raw;
+    int16_t centered;
+    int16_t scaled;
+    int8_t scroll;
 
     // ------ Inits ------
     stdio_init_all(); // init serial comms + board
     tusb_init(); // init tinyusb
+    adc_init(); // init adc for joystick readings
 
-    // LED
+    // LED (for testing purposes)
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
 
@@ -84,25 +74,62 @@ int main()
 
     // Macro Buttons
 
-    // main device loop to run
+    // ------ MAIN LOOP ------
     while (true)
     {
         tud_task(); // must be called frequently as this is the USB hid task
 
+        // ---- Button Press ----
         leftclick_pressed = !gpio_get(BUTTON1_PIN);
         rightclick_pressed = !gpio_get(BUTTON2_PIN);
 
         buttons = 0;
+
         if (leftclick_pressed)  buttons |= 0x01;
         if (rightclick_pressed) buttons |= 0x02;
 
-        if (tud_hid_ready())
+        // ---- Scrolling (GP27/ADC1) ----
+        adc_select_input(1);
+        raw = adc_read();  
+
+        centered = (int16_t)raw - 2048;
+
+        // Deadzone to prevent POTENTIAL stick drift
+        if (centered > -10 && centered < 10) 
         {
-            tud_hid_mouse_report(0, buttons, 0, 0, 0, 0);
+            scroll = 0;
+        } 
+        else 
+        {
+            scaled = centered / 1500;  // linear scrolling w/ no acceleration
+
+            // Clamp
+            if (scaled > 1)  scaled = 1;
+            if (scaled < -1) scaled = -1;
+
+            scroll = (int8_t)scaled;
         }
 
-        gpio_put(LED_PIN, leftclick_pressed);
+        // ---- sending device reports ----
+        if (tud_hid_ready())
+    {
+        absolute_time_t now = get_absolute_time();
 
-        sleep_ms(1); // VERY SHORT BUFFER
+        if (scroll != 0)
+        {
+            if (absolute_time_diff_us(last_scroll_time, now) > SCROLL_INTERVAL_US)
+            {
+                tud_hid_mouse_report(0, buttons, 0, 0, scroll, 0);
+                last_scroll_time = now;
+            }
+        }
+        else
+        {
+            // Always send zero to stop scrolling immediately
+            tud_hid_mouse_report(0, buttons, 0, 0, 0, 0);
+        }
+    }
+
+        gpio_put(LED_PIN, leftclick_pressed);
     }
 }
