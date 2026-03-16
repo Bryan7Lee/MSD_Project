@@ -1,5 +1,0 @@
-D:/Projects/MSD_Project/final_app/build/CMakeFiles/final_app.dir
-D:/Projects/MSD_Project/final_app/build/CMakeFiles/edit_cache.dir
-D:/Projects/MSD_Project/final_app/build/CMakeFiles/rebuild_cache.dir
-D:/Projects/MSD_Project/final_app/build/CMakeFiles/final_app_autogen_timestamp_deps.dir
-D:/Projects/MSD_Project/final_app/build/CMakeFiles/final_app_autogen.dir
