@@ -1,6 +1,7 @@
 // ---- Libraries ----
 #include <stdio.h>
 #include "pico/stdlib.h" 
+#include "pico/time.h"
 #include "hardware/adc.h"
 #include "tusb.h"
 #include <map>
@@ -14,7 +15,7 @@
 #define RIGHTCLICK_MASK 2
 
 // ---- Structs and whatnot ----
-// Current button mappings (example: map to keyboard keys)
+// Current button mappings (example: map to keyboard keys) TO BE WORKED ON LATER, JUSTA TEMPLATE
 std::map<int, uint8_t> button_mapping = {
     {LC_BUTTON_PIN, HID_KEY_T},   // default: T key
     {RC_BUTTON_PIN, HID_KEY_Y}   // default: Y key
@@ -28,9 +29,9 @@ struct ScrollSpeed
 
 // 3 default profiles
 ScrollSpeed scrollSpeeds[3] = {
-    {8000, 2000},   // Profile 0 (fast)
-    {15000, 2500},  // Profile 1 (medium)
-    {30000, 3000}   // Profile 2 (slow)
+    {200000, 2000}, // Profile 0 (slow)
+    {90000, 1500},  // Profile 1 (medium)
+    {30000, 1000}   // Profile 2 (fast)
 };
 
 uint8_t activeScrollSpeed = 0;
@@ -61,11 +62,15 @@ int main()
     // vars 
     static bool clicked = false;
     static absolute_time_t click_time;
-    absolute_time_t last_scroll_time = get_absolute_time();
-    const uint32_t SCROLL_INTERVAL_US = 90000; // 90ms 
-    const uint32_t SCROLL_INTERVAL_X = 100000; // 100ms
+    absolute_time_t last_scroll_time_y = get_absolute_time(); // used for debouncing
+    absolute_time_t last_scroll_time_x = get_absolute_time(); // used for debouncing
+    uint64_t last_profile_press_time = 0; // used for debouncing
+    const uint32_t PROFILE_DEBOUNCE_US = 200000; // how long to wait before registering the next button press
+    const uint32_t SCROLL_INTERVAL_X_US = 90000; // 90ms (controls how often to scroll horizontally when held)
     bool leftclick_pressed;
     bool rightclick_pressed;
+    bool profile_pressed;
+    bool profileButtonHandled = false; // flag to prevent 
     uint8_t buttons;
     uint16_t rawX;
     uint16_t rawY;
@@ -105,7 +110,28 @@ int main()
     {
         tud_task(); // must be called frequently as this is the USB hid task
 
-        // ---- Button Press ----
+        // ---- Profile Button Press ----
+        profile_pressed = !gpio_get(SS_BUTTON_PIN);
+        uint64_t  now = time_us_64();
+
+        if (profile_pressed && !profileButtonHandled)
+        {
+            if (now - last_profile_press_time > PROFILE_DEBOUNCE_US)
+            {
+                activeScrollSpeed = (activeScrollSpeed + 1) % 3;
+                last_profile_press_time = now;
+
+                profileButtonHandled = true; // set flag
+            }
+        }
+
+        // reset flag when profile button released
+        if (!profile_pressed)
+        {
+            profileButtonHandled = false;
+        }
+
+        // ---- Left/Right Click Button Press ----
         leftclick_pressed = !gpio_get(LC_BUTTON_PIN);
         rightclick_pressed = !gpio_get(RC_BUTTON_PIN);
 
@@ -132,7 +158,7 @@ int main()
         } 
         else 
         {
-            scaledY = centeredY / 1500;  // linear scrolling w/ no acceleration
+            scaledY = centeredY / scrollSpeeds[activeScrollSpeed].sensitivity_divider;  // linear scrolling w/ no acceleration
 
             // Clamp
             if (scaledY > 1)  scaledY = 1;
@@ -160,21 +186,30 @@ int main()
         // ---- sending device reports ----
         if (tud_hid_ready())
         {
-        absolute_time_t now = get_absolute_time();
+            absolute_time_t now = get_absolute_time();
+            int8_t linesY = 0;
+            int8_t linesX = 0;
 
-            if (scrollX != 0 || scrollY != 0)
+            // if vertically scrolling...
+            if (scrollY != 0)
             {
-                if (absolute_time_diff_us(last_scroll_time, now) > SCROLL_INTERVAL_US)
+                if (absolute_time_diff_us(last_scroll_time_y, now) > scrollSpeeds[activeScrollSpeed].interval_us)
                 {
-                    tud_hid_mouse_report(0, buttons, 0, 0, scrollY, scrollX);
-                    last_scroll_time = now;
+                    linesY = scrollY;
+                    last_scroll_time_y = now;
                 }
             }
-            else
+            // if horizontally scrolling...
+            if (scrollX != 0)
             {
-                // Always send zero to stop scrolling immediately
-                tud_hid_mouse_report(0, buttons, 0, 0, 0, 0);
+                if (absolute_time_diff_us(last_scroll_time_x, now) > SCROLL_INTERVAL_X_US)
+                {
+                    linesX = scrollX;
+                    last_scroll_time_x = now;
+                }
             }
+
+            tud_hid_mouse_report(0, buttons, 0, 0, linesY, linesX);
         }
     }
 }
