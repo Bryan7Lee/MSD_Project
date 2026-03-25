@@ -11,14 +11,27 @@
 #define SS_BUTTON_PIN 14 // scrolling speed cycle button
 #define LC_BUTTON_PIN 13 // left click button
 #define RC_BUTTON_PIN 15 // right click button
+#define X_AXIS_SCROLL_ADC 0 // gp26(adc0)
+#define Y_AXIS_SCROLL_ADC 1 // gp27(adc1)
+#define MACRO1_BUTTON_PIN 22 // left most button
+#define MACRO2_BUTTON_PIN 21
+#define MACRO3_BUTTON_PIN 20
+#define MACRO4_BUTTON_PIN 19 // right most button
 #define LEFTCLICK_MASK 1 
 #define RIGHTCLICK_MASK 2
 
 // ---- Structs and whatnot ----
-// Current button mappings (example: map to keyboard keys) TO BE WORKED ON LATER, JUSTA TEMPLATE
-std::map<int, uint8_t> button_mapping = {
-    {LC_BUTTON_PIN, HID_KEY_T},   // default: T key
-    {RC_BUTTON_PIN, HID_KEY_Y}   // default: Y key
+struct Macro
+{
+    uint8_t modifier; // modifier keys include ctrl, alt, shift, etc.
+    uint8_t keys[6];  // HID supports up to 6 simultaneous key presses alongside modifier
+};
+
+Macro macros[4] = {
+    {KEYBOARD_MODIFIER_LEFTCTRL, {HID_KEY_S, 0}},                 // Ctrl+S
+    {KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_LEFTALT, {HID_KEY_4, 0}}, // Ctrl+Alt+4
+    {0, {HID_KEY_T, 0}},                                          // T
+    {KEYBOARD_MODIFIER_LEFTSHIFT, {HID_KEY_A, HID_KEY_B, 0}}       // Shift+A+B
 };
 
 struct ScrollSpeed
@@ -54,6 +67,16 @@ extern "C" void tud_hid_set_report_cb(uint8_t instance,
 {
 }
 
+/** 
+ * send_macro function sends the selected macro to HID to perform
+ */
+void send_macro (const Macro& m)
+{
+    tud_hid_keyboard_report(0, m.modifier, m.keys);
+    sleep_ms(10); // hold for 10 ms
+    tud_hid_keyboard_report(0, 0, NULL); // release 
+}
+
 /**
  * main
  */
@@ -65,7 +88,7 @@ int main()
     absolute_time_t last_scroll_time_y = get_absolute_time(); // used for debouncing
     absolute_time_t last_scroll_time_x = get_absolute_time(); // used for debouncing
     uint64_t last_profile_press_time = 0; // used for debouncing
-    const uint32_t PROFILE_DEBOUNCE_US = 200000; // how long to wait before registering the next button press
+    const uint32_t PROFILE_DEBOUNCE_US = 400000; // how long to wait before registering the next button press
     const uint32_t SCROLL_INTERVAL_X_US = 90000; // 90ms (controls how often to scroll horizontally when held)
     bool leftclick_pressed;
     bool rightclick_pressed;
@@ -80,6 +103,7 @@ int main()
     int16_t scaledY;
     int8_t scrollX;
     int8_t scrollY;
+    bool macro_pressed_flag[4] = {false, false, false, false}; // used for edge detecting to prevent spam button presses when buttons are held past the debouncing time
 
     // ------ Inits ------
     stdio_init_all(); // init serial comms + board
@@ -104,6 +128,21 @@ int main()
     gpio_pull_up(RC_BUTTON_PIN);
 
     // Macro Buttons
+    gpio_init(MACRO1_BUTTON_PIN); 
+    gpio_set_dir(MACRO1_BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(MACRO1_BUTTON_PIN);
+
+    gpio_init(MACRO2_BUTTON_PIN); 
+    gpio_set_dir(MACRO2_BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(MACRO2_BUTTON_PIN);
+
+    gpio_init(MACRO3_BUTTON_PIN); 
+    gpio_set_dir(MACRO3_BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(MACRO3_BUTTON_PIN);
+
+    gpio_init(MACRO4_BUTTON_PIN); 
+    gpio_set_dir(MACRO4_BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(MACRO4_BUTTON_PIN);
 
     // ------ MAIN LOOP ------
     while (true)
@@ -137,17 +176,26 @@ int main()
 
         buttons = 0;
 
-        if (leftclick_pressed)  buttons |= 0x01;
-        if (rightclick_pressed) buttons |= 0x02;
+        if (leftclick_pressed)  buttons |= LEFTCLICK_MASK;
+        if (rightclick_pressed) buttons |= RIGHTCLICK_MASK;
+
+        // ---- Macro Button Press ----
+        // detect if any macro buttons were pressed
+        bool macro_pressed[4] = {
+            !gpio_get(MACRO1_BUTTON_PIN),
+            !gpio_get(MACRO2_BUTTON_PIN),
+            !gpio_get(MACRO3_BUTTON_PIN),
+            !gpio_get(MACRO4_BUTTON_PIN)
+        };
 
         // ---- Read Scrolling ----
         // read horizontal (X axis) scrolling (pin GP26/ADC0)
-        adc_select_input(0);
+        adc_select_input(X_AXIS_SCROLL_ADC);
         rawX = adc_read();  
         centeredX = (int16_t)rawX - 2048;
 
         // read vertical (Y axis) scrolling (pin GP27/ADC1)
-        adc_select_input(1);
+        adc_select_input(Y_AXIS_SCROLL_ADC);
         rawY = adc_read();  
         centeredY = (int16_t)rawY - 2048;
 
