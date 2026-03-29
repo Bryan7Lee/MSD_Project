@@ -6,19 +6,23 @@
 #include "tusb.h"
 #include <map>
 
-// ---- DEFINES ----
-#define LED_PIN 25     // built-in LED on board
-#define SS_BUTTON_PIN 14 // scrolling speed cycle button
-#define LC_BUTTON_PIN 13 // left click button
-#define RC_BUTTON_PIN 15 // right click button
+// ---- DEFINES ---- (FOR THE NEWEST BOARD)
+#define SS_BUTTON_PIN 12 // scrolling speed cycle button (GP12)
+#define LC_BUTTON_PIN 11 // left click button (GP11)
+#define RC_BUTTON_PIN 10 // right click button (GP10)
 #define X_AXIS_SCROLL_ADC 0 // gp26(adc0)
 #define Y_AXIS_SCROLL_ADC 1 // gp27(adc1)
-#define MACRO1_BUTTON_PIN 22 // left most button
-#define MACRO2_BUTTON_PIN 21
-#define MACRO3_BUTTON_PIN 20
-#define MACRO4_BUTTON_PIN 19 // right most button
+#define MACRO1_BUTTON_PIN 1 // left most button 
+#define MACRO2_BUTTON_PIN 2 
+#define MACRO3_BUTTON_PIN 3
+#define MACRO4_BUTTON_PIN 4 // right most button
 #define LEFTCLICK_MASK 1 
 #define RIGHTCLICK_MASK 2
+
+enum {
+  REPORT_ID_MOUSE = 1,
+  REPORT_ID_KEYBOARD
+};
 
 // ---- Structs and whatnot ----
 struct Macro
@@ -28,8 +32,8 @@ struct Macro
 };
 
 Macro macros[4] = {
-    {KEYBOARD_MODIFIER_LEFTCTRL, {HID_KEY_S, 0}},                 // Ctrl+S
-    {KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_LEFTALT, {HID_KEY_4, 0}}, // Ctrl+Alt+4
+    {KEYBOARD_MODIFIER_LEFTCTRL, {HID_KEY_T, 0}},                 // Ctrl+T
+    {KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_LEFTSHIFT, {HID_KEY_T, 0}}, // Ctrl+Shift+T
     {0, {HID_KEY_T, 0}},                                          // T
     {KEYBOARD_MODIFIER_LEFTSHIFT, {HID_KEY_A, HID_KEY_B, 0}}       // Shift+A+B
 };
@@ -42,12 +46,10 @@ struct ScrollSpeed
 
 // 3 default profiles
 ScrollSpeed scrollSpeeds[3] = {
-    {200000, 2000}, // Profile 0 (slow)
+    {200000, 1500}, // Profile 0 (slow)
     {90000, 1500},  // Profile 1 (medium)
     {30000, 1000}   // Profile 2 (fast)
 };
-
-uint8_t activeScrollSpeed = 0;
 
 // HID descriptor
 extern "C" uint16_t tud_hid_get_report_cb(uint8_t instance,
@@ -70,11 +72,25 @@ extern "C" void tud_hid_set_report_cb(uint8_t instance,
 /** 
  * send_macro function sends the selected macro to HID to perform
  */
-void send_macro (const Macro& m)
+void send_macro(const Macro& m)
 {
-    tud_hid_keyboard_report(0, m.modifier, m.keys);
-    sleep_ms(10); // hold for 10 ms
-    tud_hid_keyboard_report(0, 0, NULL); // release 
+    uint8_t report[8] = {0};
+
+    report[0] = m.modifier;
+
+    for (int i = 0; i < 6; i++)
+    {
+        report[2 + i] = m.keys[i];
+    }
+
+    // press
+    tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(report));
+    tud_task();
+
+    // release
+    memset(report, 0, sizeof(report));
+    tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(report));
+    tud_task();
 }
 
 /**
@@ -88,13 +104,14 @@ int main()
     absolute_time_t last_scroll_time_y = get_absolute_time(); // used for debouncing
     absolute_time_t last_scroll_time_x = get_absolute_time(); // used for debouncing
     uint64_t last_profile_press_time = 0; // used for debouncing
-    const uint32_t PROFILE_DEBOUNCE_US = 400000; // how long to wait before registering the next button press
+    const uint32_t PROFILE_DEBOUNCE_US = 200000; // how long to wait before registering the next button press
     const uint32_t SCROLL_INTERVAL_X_US = 90000; // 90ms (controls how often to scroll horizontally when held)
     bool leftclick_pressed;
     bool rightclick_pressed;
     bool profile_pressed;
     bool profileButtonHandled = false; // flag to prevent 
     uint8_t buttons;
+    uint8_t activeScrollSpeed = 0;
     uint16_t rawX;
     uint16_t rawY;
     int16_t centeredX;
@@ -103,16 +120,13 @@ int main()
     int16_t scaledY;
     int8_t scrollX;
     int8_t scrollY;
-    bool macro_pressed_flag[4] = {false, false, false, false}; // used for edge detecting to prevent spam button presses when buttons are held past the debouncing time
+    bool macro_pressed_flag[4] = {false, false, false, false}; // used for edge detecting to prevent spam button 
+                                                               // presses when buttons are held past the debouncing time
 
     // ------ Inits ------
     stdio_init_all(); // init serial comms + board
     tusb_init(); // init tinyusb
     adc_init(); // init adc for joystick readings
-
-    // LED (for testing purposes)
-    gpio_init(LED_PIN);
-    gpio_set_dir(LED_PIN, GPIO_OUT);
 
     // On board buttons
     gpio_init(SS_BUTTON_PIN);
@@ -157,6 +171,7 @@ int main()
         {
             if (now - last_profile_press_time > PROFILE_DEBOUNCE_US)
             {
+                printf("PROFILE BUTTON PRESSED \n");
                 activeScrollSpeed = (activeScrollSpeed + 1) % 3;
                 last_profile_press_time = now;
 
@@ -176,8 +191,16 @@ int main()
 
         buttons = 0;
 
-        if (leftclick_pressed)  buttons |= LEFTCLICK_MASK;
-        if (rightclick_pressed) buttons |= RIGHTCLICK_MASK;
+        if (leftclick_pressed) 
+        {
+            printf("left click pressed \n");
+            buttons |= LEFTCLICK_MASK;
+        } 
+        if (rightclick_pressed)
+        {
+            printf("right click pressed \n");
+            buttons |= RIGHTCLICK_MASK;
+        } 
 
         // ---- Macro Button Press ----
         // detect if any macro buttons were pressed
@@ -187,6 +210,24 @@ int main()
             !gpio_get(MACRO3_BUTTON_PIN),
             !gpio_get(MACRO4_BUTTON_PIN)
         };
+
+        for (int i=0; i<4; i++) {
+            printf("GPIO %d = %d\n", 1+i, !gpio_get(1+i));
+        }
+        
+        for (int i = 0; i < 4; i++)
+        {
+            if (macro_pressed[i] && !macro_pressed_flag[i])
+            {
+                printf("MACRO %d PRESSED\n");
+                if (tud_hid_ready())
+                {
+                    send_macro(macros[i]);
+                }
+            }
+
+            macro_pressed_flag[i] = macro_pressed[i];
+        }
 
         // ---- Read Scrolling ----
         // read horizontal (X axis) scrolling (pin GP26/ADC0)
@@ -257,7 +298,21 @@ int main()
                 }
             }
 
-            tud_hid_mouse_report(0, buttons, 0, 0, linesY, linesX);
+            static hid_mouse_report_t prev_report = {0};
+
+            hid_mouse_report_t report = {0};
+            report.buttons = buttons;
+            report.x = 0;
+            report.y = 0;
+            report.wheel = linesY;
+            report.pan = linesX;
+
+            // send only if the report has changed
+            if (memcmp(&report, &prev_report, sizeof(report)) != 0)
+            {
+                tud_hid_report(REPORT_ID_MOUSE, &report, sizeof(report));
+                prev_report = report;
+            }
         }
     }
 }

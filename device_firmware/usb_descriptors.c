@@ -1,5 +1,10 @@
 #include "tusb.h"
 
+enum {
+  REPORT_ID_MOUSE = 1,
+  REPORT_ID_KEYBOARD
+};
+
 /* Device Descriptor */
 tusb_desc_device_t const desc_device =
 {
@@ -32,23 +37,51 @@ uint8_t const * tud_descriptor_device_cb(void)
 /* HID Report Descriptor */
 uint8_t const desc_hid_report[] =
 {
-  TUD_HID_REPORT_DESC_MOUSE()
+  TUD_HID_REPORT_DESC_MOUSE(HID_REPORT_ID(REPORT_ID_MOUSE)),
+  TUD_HID_REPORT_DESC_KEYBOARD(HID_REPORT_ID(REPORT_ID_KEYBOARD))
 };
 
 /* Configuration Descriptor */
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
+enum {
+  ITF_NUM_CDC = 0,
+  ITF_NUM_CDC_DATA,
+  ITF_NUM_HID,
+  ITF_NUM_TOTAL
+};
+
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_HID_DESC_LEN)
+
+// CDC endpoints
+#define EPNUM_CDC_NOTIF   0x81
+#define EPNUM_CDC_OUT     0x02
+#define EPNUM_CDC_IN      0x82
+
+// HID endpoint
+#define EPNUM_HID         0x83
 
 uint8_t const desc_configuration[] =
 {
-  TUD_CONFIG_DESCRIPTOR(1, 1, 0, CONFIG_TOTAL_LEN, 0x00, 100),
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
 
+  // 🔹 CDC (serial for printf)
+  TUD_CDC_DESCRIPTOR(
+    ITF_NUM_CDC,
+    4, // string index
+    EPNUM_CDC_NOTIF,
+    8,
+    EPNUM_CDC_OUT,
+    EPNUM_CDC_IN,
+    64
+  ),
+
+  // 🔹 HID (your mouse)
   TUD_HID_DESCRIPTOR(
-    0, // report ID
-    0, 
-    HID_ITF_PROTOCOL_MOUSE,
+    ITF_NUM_HID,
+    5,
+    HID_ITF_PROTOCOL_NONE,
     sizeof(desc_hid_report),
-    0x81, 
-    16, 
+    EPNUM_HID,
+    16,
     10
   )
 };
@@ -71,6 +104,8 @@ static const char* string_desc_arr[] = {
     "Bryan",                    // 1: Manufacturer
     "Pico Mouse",               // 2: Product
     "123456",                   // 3: Serial
+    "CDC Interface",            // 4: CDC Notice
+    "HID Interface",            // 5: HID Notice
 };
 
 static uint16_t _desc_str[32];
