@@ -5,6 +5,8 @@
 #include "hardware/adc.h"
 #include "tusb.h"
 #include <map>
+#include "hardware/flash.h"
+#include "hardware/sync.h"
 
 // ---- DEFINES ---- (FOR THE NEWEST BOARD)
 #define SS_BUTTON_PIN 12 // scrolling speed cycle button (GP12)
@@ -12,12 +14,15 @@
 #define RC_BUTTON_PIN 10 // right click button (GP10)
 #define X_AXIS_SCROLL_ADC 0 // gp26(adc0)
 #define Y_AXIS_SCROLL_ADC 1 // gp27(adc1)
+#define SCROLL_INTERVAL_X_US 120000 // 120ms (controls how often to scroll horizontally when held)
 #define MACRO1_BUTTON_PIN 1 // left most button 
 #define MACRO2_BUTTON_PIN 2 
 #define MACRO3_BUTTON_PIN 3
 #define MACRO4_BUTTON_PIN 4 // right most button
 #define LEFTCLICK_MASK 1 
 #define RIGHTCLICK_MASK 2
+#define FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - 4096) // offset in memory for config data
+#define CONFIG_MEM 0xDEADBEEF
 
 enum {
   REPORT_ID_MOUSE = 1,
@@ -25,12 +30,13 @@ enum {
 };
 
 // ---- Structs and whatnot ----
-struct Macro
+struct __attribute__((packed)) Macro
 {
     uint8_t modifier; // modifier keys include ctrl, alt, shift, etc.
     uint8_t keys[6];  // HID supports up to 6 simultaneous key presses alongside modifier
 };
 
+// Default macros on first boot
 Macro macros[4] = {
     {KEYBOARD_MODIFIER_LEFTCTRL, {HID_KEY_T, 0}},                 // Ctrl+T
     {KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_LEFTSHIFT, {HID_KEY_T, 0}}, // Ctrl+Shift+T
@@ -38,20 +44,31 @@ Macro macros[4] = {
     {KEYBOARD_MODIFIER_LEFTSHIFT, {HID_KEY_A, HID_KEY_B, 0}}       // Shift+A+B
 };
 
-struct ScrollSpeed
+struct __attribute__((packed)) ScrollSpeed
 {
     uint32_t interval_us;          // how often scroll ticks send
     uint16_t sensitivity_divider;  // joystick scaling 
 };
 
-// 3 default profiles
+// Default scroll speeds on first boot
 ScrollSpeed scrollSpeeds[3] = {
     {200000, 1500}, // Profile 0 (slow)
     {90000, 1500},  // Profile 1 (medium)
     {30000, 1000}   // Profile 2 (fast)
 };
 
-// HID descriptor
+// OVERHEADING CONFIG STRUCT THAT HOLDS ALL DATA FOR MEMORY PURPOSES
+struct __attribute__((packed)) DeviceConfig
+{
+    uint32_t dataSignature;
+    Macro macros[4];
+    ScrollSpeed scrollSpeeds[3];
+    uint8_t activeScrollSpeed;
+};
+
+DeviceConfig config;
+
+// HID descriptors
 extern "C" uint16_t tud_hid_get_report_cb(uint8_t instance,
                                           uint8_t report_id,
                                           hid_report_type_t report_type,
@@ -86,11 +103,50 @@ void send_macro(const Macro& m)
     // press
     tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(report));
     tud_task();
+    sleep_ms(10);
 
     // release
     memset(report, 0, sizeof(report));
     tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(report));
     tud_task();
+}
+
+/** 
+ * save_config stores recently saved config to flash as memory
+ */
+void save_config()
+{
+    uint32_t interrupts = save_and_disable_interrupts();
+
+    flash_range_erase(FLASH_OFFSET, 4096);
+    flash_range_program(FLASH_OFFSET, (uint8_t*)&config, sizeof(DeviceConfig));
+
+    restore_interrupts(interrupts);
+}
+
+/** 
+ * load_config loads the most recently saved config data from previous device boot-up to
+ * reuse previous configuration without forcing to default
+ */
+void load_config()
+{
+    const DeviceConfig* flash_data = (const DeviceConfig*)(XIP_BASE + FLASH_OFFSET);
+
+    if (flash_data->dataSignature == CONFIG_MEM)
+    {
+        memcpy(&config, flash_data, sizeof(DeviceConfig));
+    }
+    else
+    {
+        // FIRST BOOT → use your current defaults
+        config.dataSignature = CONFIG_MEM;
+
+        memcpy(config.macros, macros, sizeof(macros));
+        memcpy(config.scrollSpeeds, scrollSpeeds, sizeof(scrollSpeeds));
+        config.activeScrollSpeed = 0;
+
+        save_config();
+    }
 }
 
 /**
@@ -100,18 +156,16 @@ int main()
 {
     // vars 
     static bool clicked = false;
-    static absolute_time_t click_time;
     absolute_time_t last_scroll_time_y = get_absolute_time(); // used for debouncing
     absolute_time_t last_scroll_time_x = get_absolute_time(); // used for debouncing
     uint64_t last_profile_press_time = 0; // used for debouncing
     const uint32_t PROFILE_DEBOUNCE_US = 200000; // how long to wait before registering the next button press
-    const uint32_t SCROLL_INTERVAL_X_US = 90000; // 90ms (controls how often to scroll horizontally when held)
-    bool leftclick_pressed;
-    bool rightclick_pressed;
-    bool profile_pressed;
-    bool profileButtonHandled = false; // flag to prevent 
+    bool leftclickPressed;
+    bool rightclickPressed;
+    bool profiledPressed;
+    bool profileButtonHandled = false; // flag to prevent spam
+    bool configChanged = false; // flag to prevent spam 
     uint8_t buttons;
-    uint8_t activeScrollSpeed = 0;
     uint16_t rawX;
     uint16_t rawY;
     int16_t centeredX;
@@ -127,6 +181,7 @@ int main()
     stdio_init_all(); // init serial comms + board
     tusb_init(); // init tinyusb
     adc_init(); // init adc for joystick readings
+    load_config();
 
     // On board buttons
     gpio_init(SS_BUTTON_PIN);
@@ -158,21 +213,24 @@ int main()
     gpio_set_dir(MACRO4_BUTTON_PIN, GPIO_IN);
     gpio_pull_up(MACRO4_BUTTON_PIN);
 
+    printf("Config size: %d\n", sizeof(DeviceConfig));
+
     // ------ MAIN LOOP ------
     while (true)
     {
         tud_task(); // must be called frequently as this is the USB hid task
 
         // ---- Profile Button Press ----
-        profile_pressed = !gpio_get(SS_BUTTON_PIN);
+        profiledPressed = !gpio_get(SS_BUTTON_PIN);
         uint64_t  now = time_us_64();
 
-        if (profile_pressed && !profileButtonHandled)
+        if (profiledPressed && !profileButtonHandled)
         {
             if (now - last_profile_press_time > PROFILE_DEBOUNCE_US)
             {
                 printf("PROFILE BUTTON PRESSED \n");
-                activeScrollSpeed = (activeScrollSpeed + 1) % 3;
+                config.activeScrollSpeed = (config.activeScrollSpeed + 1) % 3;
+                save_config(); 
                 last_profile_press_time = now;
 
                 profileButtonHandled = true; // set flag
@@ -180,23 +238,23 @@ int main()
         }
 
         // reset flag when profile button released
-        if (!profile_pressed)
+        if (!profiledPressed)
         {
             profileButtonHandled = false;
         }
 
         // ---- Left/Right Click Button Press ----
-        leftclick_pressed = !gpio_get(LC_BUTTON_PIN);
-        rightclick_pressed = !gpio_get(RC_BUTTON_PIN);
+        leftclickPressed = !gpio_get(LC_BUTTON_PIN);
+        rightclickPressed = !gpio_get(RC_BUTTON_PIN);
 
         buttons = 0;
 
-        if (leftclick_pressed) 
+        if (leftclickPressed) 
         {
             printf("left click pressed \n");
             buttons |= LEFTCLICK_MASK;
         } 
-        if (rightclick_pressed)
+        if (rightclickPressed)
         {
             printf("right click pressed \n");
             buttons |= RIGHTCLICK_MASK;
@@ -210,10 +268,6 @@ int main()
             !gpio_get(MACRO3_BUTTON_PIN),
             !gpio_get(MACRO4_BUTTON_PIN)
         };
-
-        for (int i=0; i<4; i++) {
-            printf("GPIO %d = %d\n", 1+i, !gpio_get(1+i));
-        }
         
         for (int i = 0; i < 4; i++)
         {
@@ -222,7 +276,7 @@ int main()
                 printf("MACRO %d PRESSED\n");
                 if (tud_hid_ready())
                 {
-                    send_macro(macros[i]);
+                    send_macro(config.macros[i]);
                 }
             }
 
@@ -247,7 +301,7 @@ int main()
         } 
         else 
         {
-            scaledY = centeredY / scrollSpeeds[activeScrollSpeed].sensitivity_divider;  // linear scrolling w/ no acceleration
+            scaledY = centeredY / config.scrollSpeeds[config.activeScrollSpeed].sensitivity_divider;  // linear scrolling w/ no acceleration
 
             // Clamp
             if (scaledY > 1)  scaledY = 1;
@@ -282,7 +336,7 @@ int main()
             // if vertically scrolling...
             if (scrollY != 0)
             {
-                if (absolute_time_diff_us(last_scroll_time_y, now) > scrollSpeeds[activeScrollSpeed].interval_us)
+                if (absolute_time_diff_us(last_scroll_time_y, now) > config.scrollSpeeds[config.activeScrollSpeed].interval_us)
                 {
                     linesY = scrollY;
                     last_scroll_time_y = now;
