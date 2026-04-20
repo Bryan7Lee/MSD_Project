@@ -36,12 +36,16 @@ struct __attribute__((packed)) Macro
     uint8_t keys[6];  // HID supports up to 6 simultaneous key presses alongside modifier
 };
 
-// Default macros on first boot
+bool macro_active = false;
+Macro current_macro;
+absolute_time_t macro_start_time;
+
+// Default macros
 Macro macros[4] = {
     {KEYBOARD_MODIFIER_LEFTCTRL, {HID_KEY_T, 0}},                 // Ctrl+T
     {KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_LEFTSHIFT, {HID_KEY_T, 0}}, // Ctrl+Shift+T
     {0, {HID_KEY_T, 0}},                                          // T
-    {KEYBOARD_MODIFIER_LEFTSHIFT, {HID_KEY_A, HID_KEY_B, 0}}       // Shift+A+B
+    {KEYBOARD_MODIFIER_LEFTSHIFT, {HID_KEY_A, HID_KEY_B, 0}}      // Shift+A+B
 };
 
 struct __attribute__((packed)) ScrollSpeed
@@ -50,7 +54,7 @@ struct __attribute__((packed)) ScrollSpeed
     uint16_t sensitivity_divider;  // joystick scaling 
 };
 
-// Default scroll speeds on first boot
+// Default scroll speeds
 ScrollSpeed scrollSpeeds[3] = {
     {200000, 1500}, // Profile 0 (slow)
     {90000, 1500},  // Profile 1 (medium)
@@ -61,6 +65,7 @@ ScrollSpeed scrollSpeeds[3] = {
 struct __attribute__((packed)) DeviceConfig
 {
     uint32_t dataSignature;
+    uint16_t version;
     Macro macros[4];
     ScrollSpeed scrollSpeeds[3];
     uint8_t activeScrollSpeed;
@@ -84,31 +89,6 @@ extern "C" void tud_hid_set_report_cb(uint8_t instance,
                                       uint8_t const* buffer,
                                       uint16_t bufsize)
 {
-}
-
-/** 
- * send_macro function sends the selected macro to HID to perform
- */
-void send_macro(const Macro& m)
-{
-    uint8_t report[8] = {0};
-
-    report[0] = m.modifier;
-
-    for (int i = 0; i < 6; i++)
-    {
-        report[2 + i] = m.keys[i];
-    }
-
-    // press
-    tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(report));
-    tud_task();
-    sleep_ms(10);
-
-    // release
-    memset(report, 0, sizeof(report));
-    tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(report));
-    tud_task();
 }
 
 /** 
@@ -273,14 +253,40 @@ int main()
         {
             if (macro_pressed[i] && !macro_pressed_flag[i])
             {
-                printf("MACRO %d PRESSED\n");
-                if (tud_hid_ready())
+                printf("MACRO %d PRESSED\n", i);
+                if (!macro_active && tud_hid_ready())
                 {
-                    send_macro(config.macros[i]);
+                    current_macro = config.macros[i];
+                    macro_active = true;
+                    macro_start_time = get_absolute_time();
                 }
             }
 
             macro_pressed_flag[i] = macro_pressed[i];
+        }
+
+        if (macro_active && tud_hid_ready())
+        {
+            uint8_t report[8] = {0};
+
+            // press phase (first 20ms)
+            if (absolute_time_diff_us(macro_start_time, get_absolute_time()) < 20000)
+            {
+                report[0] = current_macro.modifier;
+
+                for (int i = 0; i < 6; i++)
+                {
+                    report[2 + i] = current_macro.keys[i];
+                }
+            }
+            else
+            {
+                // release phase
+                memset(report, 0, sizeof(report));
+                macro_active = false;
+            }
+
+            tud_hid_report(REPORT_ID_KEYBOARD, report, sizeof(report));
         }
 
         // ---- Read Scrolling ----
