@@ -23,6 +23,7 @@
 #define RIGHTCLICK_MASK 2
 #define FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - 4096) // offset in memory for config data
 #define CONFIG_MEM 0xDEADBEEF
+#define CONFIG_VERSION 1
 
 enum {
   REPORT_ID_MOUSE = 1,
@@ -41,7 +42,7 @@ Macro current_macro;
 absolute_time_t macro_start_time;
 
 // Default macros
-Macro macros[4] = {
+Macro default_macros[4] = {
     {KEYBOARD_MODIFIER_LEFTCTRL, {HID_KEY_T, 0}},                 // Ctrl+T
     {KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_LEFTSHIFT, {HID_KEY_T, 0}}, // Ctrl+Shift+T
     {0, {HID_KEY_T, 0}},                                          // T
@@ -55,7 +56,7 @@ struct __attribute__((packed)) ScrollSpeed
 };
 
 // Default scroll speeds
-ScrollSpeed scrollSpeeds[3] = {
+ScrollSpeed default_scrollSpeeds[3] = {
     {200000, 1500}, // Profile 0 (slow)
     {90000, 1500},  // Profile 1 (medium)
     {30000, 1000}   // Profile 2 (fast)
@@ -112,17 +113,18 @@ void load_config()
 {
     const DeviceConfig* flash_data = (const DeviceConfig*)(XIP_BASE + FLASH_OFFSET);
 
-    if (flash_data->dataSignature == CONFIG_MEM)
+    if (flash_data->dataSignature == CONFIG_MEM && flash_data->version == CONFIG_VERSION)
     {
         memcpy(&config, flash_data, sizeof(DeviceConfig));
     }
     else
     {
         // FIRST BOOT → use your current defaults
+        memset(&config, 0, sizeof(config));
         config.dataSignature = CONFIG_MEM;
-
-        memcpy(config.macros, macros, sizeof(macros));
-        memcpy(config.scrollSpeeds, scrollSpeeds, sizeof(scrollSpeeds));
+        config.version = CONFIG_VERSION;
+        memcpy(config.macros, default_macros, sizeof(default_macros));
+        memcpy(config.scrollSpeeds, default_scrollSpeeds, sizeof(default_scrollSpeeds));
         config.activeScrollSpeed = 0;
 
         save_config();
